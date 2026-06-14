@@ -117,7 +117,7 @@ function Merge-Config {
 }
 
 if ([string]::IsNullOrWhiteSpace($ApiKey)) {
-    $secureKey = Read-Host "请输入 API key" -AsSecureString
+    $secureKey = Read-Host "Enter API key" -AsSecureString
     $plainPtr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
     try {
         $ApiKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($plainPtr)
@@ -128,7 +128,7 @@ if ([string]::IsNullOrWhiteSpace($ApiKey)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ApiKey)) {
-    throw "API key 不能为空"
+    throw "API key cannot be empty"
 }
 
 if ([string]::IsNullOrWhiteSpace($DirName)) {

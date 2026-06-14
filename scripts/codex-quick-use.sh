@@ -15,14 +15,14 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     *)
-      echo "未知参数：$1" >&2
+      echo "Unknown argument: $1" >&2
       exit 1
       ;;
   esac
 done
 
 if [ -z "${api_key// }" ]; then
-  printf "请输入 API key: "
+  printf "Enter API key: "
   stty -echo
   read -r api_key
   stty echo
@@ -30,7 +30,7 @@ if [ -z "${api_key// }" ]; then
 fi
 
 if [ -z "${api_key// }" ]; then
-  echo "API key 不能为空" >&2
+  echo "API key cannot be empty" >&2
   exit 1
 fi
 
