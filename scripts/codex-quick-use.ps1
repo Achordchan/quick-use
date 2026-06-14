@@ -1,6 +1,7 @@
 param(
     [string]$ApiKey = "",
-    [string]$DirName = ".codex"
+    [string]$DirName = ".codex",
+    [string]$Action = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -8,8 +9,9 @@ $ErrorActionPreference = "Stop"
 function Backup-FileIfExists {
     param([string]$Path)
 
-    if (Test-Path -LiteralPath $Path -PathType Leaf) {
-        Copy-Item -LiteralPath $Path -Destination "$Path.bak" -Force
+    $backupPath = "$Path.bak"
+    if ((Test-Path -LiteralPath $Path -PathType Leaf) -and -not (Test-Path -LiteralPath $backupPath -PathType Leaf)) {
+        Copy-Item -LiteralPath $Path -Destination $backupPath
     }
 }
 
@@ -116,50 +118,127 @@ function Merge-Config {
     return "$managed`n`n$cleaned`n"
 }
 
-if ([string]::IsNullOrWhiteSpace($ApiKey)) {
+function Get-TargetPaths {
+    if ([string]::IsNullOrWhiteSpace($script:DirName)) {
+        $script:DirName = ".codex"
+    }
+
+    $targetDir = Join-Path $HOME $script:DirName
+    return @{
+        TargetDir = $targetDir
+        ConfigPath = Join-Path $targetDir "config.toml"
+        AuthPath = Join-Path $targetDir "auth.json"
+    }
+}
+
+function Read-ApiKey {
+    if (-not [string]::IsNullOrWhiteSpace($script:ApiKey)) {
+        return $script:ApiKey
+    }
+
     $secureKey = Read-Host "Enter API key" -AsSecureString
     $plainPtr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
     try {
-        $ApiKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($plainPtr)
+        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($plainPtr)
     }
     finally {
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($plainPtr)
     }
 }
 
-if ([string]::IsNullOrWhiteSpace($ApiKey)) {
-    throw "API key cannot be empty"
-}
+function Invoke-Deploy {
+    $key = Read-ApiKey
+    if ([string]::IsNullOrWhiteSpace($key)) {
+        throw "API key cannot be empty"
+    }
 
-if ([string]::IsNullOrWhiteSpace($DirName)) {
-    $DirName = ".codex"
-}
+    $paths = Get-TargetPaths
+    New-Item -ItemType Directory -Path $paths.TargetDir -Force | Out-Null
 
-$targetDir = Join-Path $HOME $DirName
-$configPath = Join-Path $targetDir "config.toml"
-$authPath = Join-Path $targetDir "auth.json"
+    $existingConfig = ""
+    if (Test-Path -LiteralPath $paths.ConfigPath -PathType Leaf) {
+        Backup-FileIfExists $paths.ConfigPath
+        $existingConfig = Get-Content -LiteralPath $paths.ConfigPath -Raw -Encoding UTF8
+    }
 
-New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+    Write-Utf8NoBom -Path $paths.ConfigPath -Content (Merge-Config $existingConfig)
 
-$existingConfig = ""
-if (Test-Path -LiteralPath $configPath -PathType Leaf) {
-    Backup-FileIfExists $configPath
-    $existingConfig = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
-}
+    if (Test-Path -LiteralPath $paths.AuthPath -PathType Leaf) {
+        Backup-FileIfExists $paths.AuthPath
+    }
 
-$mergedConfig = Merge-Config $existingConfig
-Write-Utf8NoBom -Path $configPath -Content $mergedConfig
-
-if (Test-Path -LiteralPath $authPath -PathType Leaf) {
-    Backup-FileIfExists $authPath
-}
-
-$escapedApiKey = Escape-JsonString $ApiKey
-$authContent = @"
+    $escapedApiKey = Escape-JsonString $key
+    $authContent = @"
 {
   "OPENAI_API_KEY": "$escapedApiKey"
 }
 "@
-Write-Utf8NoBom -Path $authPath -Content ($authContent + "`n")
+    Write-Utf8NoBom -Path $paths.AuthPath -Content ($authContent + "`n")
 
-Write-Host "Done: $targetDir"
+    Write-Host "Deploy done: $($paths.TargetDir)"
+}
+
+function Restore-File {
+    param([string]$Path)
+
+    $backupPath = "$Path.bak"
+    if (Test-Path -LiteralPath $backupPath -PathType Leaf) {
+        Copy-Item -LiteralPath $backupPath -Destination $Path -Force
+        return $true
+    }
+    return $false
+}
+
+function Invoke-RestoreDefault {
+    $paths = Get-TargetPaths
+    if (-not (Test-Path -LiteralPath $paths.TargetDir -PathType Container)) {
+        Write-Host "Nothing to restore: $($paths.TargetDir)"
+        return
+    }
+
+    if (-not (Restore-File $paths.ConfigPath)) {
+        if (Test-Path -LiteralPath $paths.ConfigPath -PathType Leaf) {
+            $existingConfig = Get-Content -LiteralPath $paths.ConfigPath -Raw -Encoding UTF8
+            $cleanedConfig = Remove-ManagedConfig $existingConfig
+            if ([string]::IsNullOrWhiteSpace($cleanedConfig)) {
+                Remove-Item -LiteralPath $paths.ConfigPath -Force
+            }
+            else {
+                Write-Utf8NoBom -Path $paths.ConfigPath -Content ($cleanedConfig + "`n")
+            }
+        }
+    }
+
+    if (-not (Restore-File $paths.AuthPath)) {
+        if (Test-Path -LiteralPath $paths.AuthPath -PathType Leaf) {
+            Remove-Item -LiteralPath $paths.AuthPath -Force
+        }
+    }
+
+    Write-Host "Restore done: $($paths.TargetDir)"
+}
+
+function Show-Menu {
+    Write-Host ""
+    Write-Host "1) Deploy"
+    Write-Host "2) Restore default"
+    Write-Host "3) Exit"
+    return (Read-Host "Select 1-3")
+}
+
+if ([string]::IsNullOrWhiteSpace($Action)) {
+    $choice = Show-Menu
+    switch ($choice) {
+        "1" { $Action = "deploy" }
+        "2" { $Action = "restore" }
+        "3" { $Action = "exit" }
+        default { throw "Invalid selection" }
+    }
+}
+
+switch ($Action.Trim().ToLowerInvariant()) {
+    "deploy" { Invoke-Deploy }
+    "restore" { Invoke-RestoreDefault }
+    "exit" { Write-Host "Exit" }
+    default { throw "Unknown action: $Action" }
+}

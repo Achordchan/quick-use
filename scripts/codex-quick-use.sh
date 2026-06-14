@@ -3,6 +3,7 @@ set -euo pipefail
 
 api_key="${CODEX_API_KEY:-}"
 dir_name="${CODEX_DIR_NAME:-.codex}"
+action="${CODEX_ACTION:-}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -14,25 +15,16 @@ while [ "$#" -gt 0 ]; do
       dir_name="${2:-}"
       shift 2
       ;;
+    --action)
+      action="${2:-}"
+      shift 2
+      ;;
     *)
       echo "Unknown argument: $1" >&2
       exit 1
       ;;
   esac
 done
-
-if [ -z "${api_key// }" ]; then
-  printf "Enter API key: "
-  stty -echo
-  read -r api_key
-  stty echo
-  printf "\n"
-fi
-
-if [ -z "${api_key// }" ]; then
-  echo "API key cannot be empty" >&2
-  exit 1
-fi
 
 if [ -z "${dir_name// }" ]; then
   dir_name=".codex"
@@ -58,6 +50,13 @@ requires_openai_auth = true
 
 [features]
 goals = true'
+
+backup_file_if_exists() {
+  local path="$1"
+  if [ -f "$path" ] && [ ! -f "$path.bak" ]; then
+    cp "$path" "$path.bak"
+  fi
+}
 
 remove_managed_config() {
   awk '
@@ -98,31 +97,114 @@ remove_managed_config() {
   '
 }
 
-mkdir -p "$target_dir"
+trim_blank_edges() {
+  sed '/./,$!d' | sed ':a;/^\n*$/{$d;N;ba;}'
+}
 
-existing_config=""
-if [ -f "$config_path" ]; then
-  cp "$config_path" "$config_path.bak"
-  existing_config="$(cat "$config_path")"
-fi
+read_api_key() {
+  if [ -n "${api_key// }" ]; then
+    return
+  fi
 
-cleaned_config="$(printf "%s" "$existing_config" | remove_managed_config | sed '/./,$!d' | sed ':a;/^\n*$/{$d;N;ba;}')"
-if [ -z "$cleaned_config" ]; then
-  printf "%s\n" "$managed_config" > "$config_path"
-else
-  printf "%s\n\n%s\n" "$managed_config" "$cleaned_config" > "$config_path"
-fi
+  printf "Enter API key: "
+  stty -echo
+  read -r api_key
+  stty echo
+  printf "\n"
 
-if [ -f "$auth_path" ]; then
-  cp "$auth_path" "$auth_path.bak"
-fi
+  if [ -z "${api_key// }" ]; then
+    echo "API key cannot be empty" >&2
+    exit 1
+  fi
+}
 
-escaped_key="$(printf "%s" "$api_key" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-cat > "$auth_path" <<EOF
+deploy() {
+  read_api_key
+  mkdir -p "$target_dir"
+
+  existing_config=""
+  if [ -f "$config_path" ]; then
+    backup_file_if_exists "$config_path"
+    existing_config="$(cat "$config_path")"
+  fi
+
+  cleaned_config="$(printf "%s" "$existing_config" | remove_managed_config | trim_blank_edges)"
+  if [ -z "$cleaned_config" ]; then
+    printf "%s\n" "$managed_config" > "$config_path"
+  else
+    printf "%s\n\n%s\n" "$managed_config" "$cleaned_config" > "$config_path"
+  fi
+
+  if [ -f "$auth_path" ]; then
+    backup_file_if_exists "$auth_path"
+  fi
+
+  escaped_key="$(printf "%s" "$api_key" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+  cat > "$auth_path" <<EOF
 {
   "OPENAI_API_KEY": "$escaped_key"
 }
 EOF
 
-chmod 600 "$config_path" "$auth_path" 2>/dev/null || true
-echo "Done: $target_dir"
+  chmod 600 "$config_path" "$auth_path" 2>/dev/null || true
+  echo "Deploy done: $target_dir"
+}
+
+restore_file() {
+  local path="$1"
+  if [ -f "$path.bak" ]; then
+    cp "$path.bak" "$path"
+    return 0
+  fi
+  return 1
+}
+
+restore_default() {
+  if [ ! -d "$target_dir" ]; then
+    echo "Nothing to restore: $target_dir"
+    return
+  fi
+
+  if ! restore_file "$config_path"; then
+    if [ -f "$config_path" ]; then
+      cleaned_config="$(cat "$config_path" | remove_managed_config | trim_blank_edges)"
+      if [ -z "$cleaned_config" ]; then
+        rm -f "$config_path"
+      else
+        printf "%s\n" "$cleaned_config" > "$config_path"
+      fi
+    fi
+  fi
+
+  if ! restore_file "$auth_path"; then
+    rm -f "$auth_path"
+  fi
+
+  echo "Restore done: $target_dir"
+}
+
+show_menu() {
+  printf "\n"
+  printf "1) Deploy\n"
+  printf "2) Restore default\n"
+  printf "3) Exit\n"
+  printf "Select 1-3: "
+  read -r choice
+  case "$choice" in
+    1) action="deploy" ;;
+    2) action="restore" ;;
+    3) action="exit" ;;
+    *) echo "Invalid selection" >&2; exit 1 ;;
+  esac
+}
+
+if [ -z "${action// }" ]; then
+  show_menu
+fi
+
+case "$(printf "%s" "$action" | tr '[:upper:]' '[:lower:]')" in
+  deploy) deploy ;;
+  restore) restore_default ;;
+  exit) echo "Exit" ;;
+  *) echo "Unknown action: $action" >&2; exit 1 ;;
+esac

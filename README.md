@@ -18,6 +18,20 @@ macOS：
 curl -fsSL https://raw.githubusercontent.com/Achordchan/quick-use/main/scripts/codex-quick-use.sh | bash
 ```
 
+运行后会先显示菜单：
+
+```text
+1) Deploy
+2) Restore default
+3) Exit
+```
+
+对应含义：
+
+- `Deploy`：一键部署，输入 API key 后写入配置。
+- `Restore default`：恢复默认，优先从 `.bak` 还原；没有备份时移除本工具写入的配置。
+- `Exit`：退出，不修改文件。
+
 本机测试不要写真实 `.codex`，可以这样写到 `.codex1`：
 
 ```powershell
@@ -26,6 +40,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\codex-quick-use.ps1 -DirName 
 
 ```bash
 CODEX_DIR_NAME=.codex1 bash scripts/codex-quick-use.sh
+```
+
+自动化测试可以跳过菜单：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\codex-quick-use.ps1 -Action deploy -ApiKey sk-test -DirName .codex1
+powershell -ExecutionPolicy Bypass -File .\scripts\codex-quick-use.ps1 -Action restore -DirName .codex1
+```
+
+```bash
+CODEX_ACTION=deploy CODEX_API_KEY=sk-test CODEX_DIR_NAME=.codex1 bash scripts/codex-quick-use.sh
+CODEX_ACTION=restore CODEX_DIR_NAME=.codex1 bash scripts/codex-quick-use.sh
 ```
 
 ## 写入内容
