@@ -6,16 +6,18 @@
 
 下面命令会从 GitHub 下载脚本并执行。
 
+脚本包含菜单输入，必须先下载到临时文件再执行；不要直接使用 `curl ... | bash` 或 `iwr ... | iex`。
+
 Windows PowerShell：
 
 ```powershell
-iwr -UseB https://raw.githubusercontent.com/Achordchan/quick-use/main/scripts/codex-quick-use.ps1 | iex
+$p="$env:TEMP\codex-quick-use.ps1"; iwr -UseB https://raw.githubusercontent.com/Achordchan/quick-use/main/scripts/codex-quick-use.ps1 -OutFile $p; powershell -ExecutionPolicy Bypass -File $p
 ```
 
 macOS：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Achordchan/quick-use/main/scripts/codex-quick-use.sh | bash
+t="$(mktemp)"; curl -fsSL https://raw.githubusercontent.com/Achordchan/quick-use/main/scripts/codex-quick-use.sh -o "$t"; bash "$t"; rm -f "$t"
 ```
 
 运行后会先显示菜单：

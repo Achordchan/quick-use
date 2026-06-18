@@ -223,17 +223,17 @@ function Show-Menu {
     Write-Host "1) Deploy"
     Write-Host "2) Restore default"
     Write-Host "3) Exit"
-    return (Read-Host "Select 1-3")
+    $choice = Read-Host "Select 1-3"
+    switch ($choice) {
+        "1" { $script:Action = "deploy" }
+        "2" { $script:Action = "restore" }
+        "3" { $script:Action = "exit" }
+        default { throw "Invalid selection: $choice" }
+    }
 }
 
 if ([string]::IsNullOrWhiteSpace($Action)) {
-    $choice = Show-Menu
-    switch ($choice) {
-        "1" { $Action = "deploy" }
-        "2" { $Action = "restore" }
-        "3" { $Action = "exit" }
-        default { throw "Invalid selection" }
-    }
+    Show-Menu
 }
 
 switch ($Action.Trim().ToLowerInvariant()) {

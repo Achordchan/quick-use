@@ -106,11 +106,23 @@ read_api_key() {
     return
   fi
 
-  printf "Enter API key: "
-  stty -echo
-  read -r api_key
-  stty echo
-  printf "\n"
+  if [ -r /dev/tty ] && [ -t 1 ]; then
+    printf "Enter API key: " > /dev/tty
+    stty -echo < /dev/tty
+    IFS= read -r api_key < /dev/tty
+    stty echo < /dev/tty
+    printf "\n" > /dev/tty
+  else
+    printf "Enter API key: "
+    if [ -t 0 ]; then
+      stty -echo
+    fi
+    IFS= read -r api_key
+    if [ -t 0 ]; then
+      stty echo
+    fi
+    printf "\n"
+  fi
 
   if [ -z "${api_key// }" ]; then
     echo "API key cannot be empty" >&2
@@ -184,12 +196,22 @@ restore_default() {
 }
 
 show_menu() {
-  printf "\n"
-  printf "1) Deploy\n"
-  printf "2) Restore default\n"
-  printf "3) Exit\n"
-  printf "Select 1-3: "
-  read -r choice
+  if [ -r /dev/tty ] && [ -t 1 ]; then
+    printf "\n" > /dev/tty
+    printf "1) Deploy\n" > /dev/tty
+    printf "2) Restore default\n" > /dev/tty
+    printf "3) Exit\n" > /dev/tty
+    printf "Select 1-3: " > /dev/tty
+    IFS= read -r choice < /dev/tty
+  else
+    printf "\n"
+    printf "1) Deploy\n"
+    printf "2) Restore default\n"
+    printf "3) Exit\n"
+    printf "Select 1-3: "
+    IFS= read -r choice
+  fi
+
   case "$choice" in
     1) action="deploy" ;;
     2) action="restore" ;;
