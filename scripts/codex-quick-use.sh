@@ -34,22 +34,19 @@ target_dir="$HOME/$dir_name"
 config_path="$target_dir/config.toml"
 auth_path="$target_dir/auth.json"
 
-managed_config='model_provider = "OpenAI"
+managed_root_keys='model_provider = "OpenAI"
 model = "gpt-5.5"
 review_model = "gpt-5.5"
 model_reasoning_effort = "high"
 disable_response_storage = true
 network_access = "enabled"
-windows_wsl_setup_acknowledged = true
+windows_wsl_setup_acknowledged = true'
 
-[model_providers.OpenAI]
+managed_provider_block='[model_providers.OpenAI]
 name = "OpenAI"
 base_url = "https://sub.achord.cn:8443"
 wire_api = "responses"
-requires_openai_auth = true
-
-[features]
-goals = true'
+requires_openai_auth = true'
 
 backup_file_if_exists() {
   local path="$1"
@@ -58,7 +55,7 @@ backup_file_if_exists() {
   fi
 }
 
-remove_managed_config() {
+split_config_for_merge() {
   awk '
     function trim(s) {
       gsub(/^[ \t]+|[ \t]+$/, "", s)
@@ -82,23 +79,127 @@ remove_managed_config() {
       trimmed = trim(line)
       if (trimmed ~ /^\[.*\]$/) {
         in_root = 0
-        in_managed = trimmed == "[model_providers.OpenAI]" || trimmed == "[features]"
-        if (!in_managed) print line
+        in_managed_provider = trimmed == "[model_providers.OpenAI]"
+        in_features = trimmed == "[features]"
+        in_other_section = !(in_managed_provider || in_features)
+        if (in_other_section) print "SECTION\t" line
         next
       }
-      if (in_managed && (trimmed == "" || trimmed ~ /^#/ || trimmed ~ /=/)) next
-      if (in_root && managed_root_key(trimmed)) next
-      print line
+      if (in_managed_provider) {
+        if (trimmed == "" || trimmed ~ /^#/ || trimmed ~ /=/) next
+        in_managed_provider = 0
+        in_other_section = 1
+        print "SECTION\t" line
+        next
+      }
+      if (in_features) {
+        if (trimmed == "" || trimmed ~ /^#/) next
+        if (trimmed ~ /=/) {
+          key = trimmed
+          sub(/=.*/, "", key)
+          key = trim(key)
+          if (key != "goals") print "FEATURE\t" line
+          next
+        }
+        in_features = 0
+        in_other_section = 1
+        print "SECTION\t" line
+        next
+      }
+      if (in_other_section) {
+        print "SECTION\t" line
+        next
+      }
+      if (in_root) {
+        if (managed_root_key(trimmed)) next
+        print "ROOT\t" line
+        next
+      }
+      print "SECTION\t" line
     }
     BEGIN {
       in_root = 1
-      in_managed = 0
+      in_managed_provider = 0
+      in_features = 0
+      in_other_section = 0
     }
   '
 }
 
 trim_blank_edges() {
   sed '/./,$!d' | sed ':a;/^\n*$/{$d;N;ba;}'
+}
+
+extract_part() {
+  local kind="$1"
+  local text="$2"
+  printf "%s\n" "$text" | awk -v kind="$kind" -F '\t' '$1==kind{print substr($0, length(kind)+2)}' | trim_blank_edges
+}
+
+build_features_block() {
+  local include_goals="$1"
+  local features_text="$2"
+  local out=""
+
+  if [ "$include_goals" = "1" ]; then
+    out="goals = true"
+  fi
+
+  if [ -n "${features_text// }" ]; then
+    if [ -n "$out" ]; then
+      out="$out
+$features_text"
+    else
+      out="$features_text"
+    fi
+  fi
+
+  if [ -z "${out// }" ]; then
+    return 0
+  fi
+
+  printf "[features]\n%s\n" "$out"
+}
+
+join_config_chunks() {
+  local first=1
+  local chunk
+  for chunk in "$@"; do
+    if [ -z "${chunk// }" ]; then
+      continue
+    fi
+    if [ "$first" -eq 1 ]; then
+      printf "%s\n" "$chunk"
+      first=0
+    else
+      printf "\n%s\n" "$chunk"
+    fi
+  done
+}
+
+remove_managed_config() {
+  local split_out root_text section_text feature_text
+  split_out="$(printf "%s" "$1" | split_config_for_merge)"
+  root_text="$(extract_part ROOT "$split_out")"
+  section_text="$(extract_part SECTION "$split_out")"
+  feature_text="$(extract_part FEATURE "$split_out")"
+  join_config_chunks "$root_text" "$section_text" "$(build_features_block 0 "$feature_text")" | trim_blank_edges
+}
+
+merge_config() {
+  local existing="$1"
+  local split_out root_text section_text feature_text
+
+  split_out="$(printf "%s" "$existing" | split_config_for_merge)"
+  root_text="$(extract_part ROOT "$split_out")"
+  section_text="$(extract_part SECTION "$split_out")"
+  feature_text="$(extract_part FEATURE "$split_out")"
+  join_config_chunks \
+    "$managed_root_keys" \
+    "$root_text" \
+    "$managed_provider_block" \
+    "$section_text" \
+    "$(build_features_block 1 "$feature_text")"
 }
 
 read_api_key() {
@@ -140,12 +241,7 @@ deploy() {
     existing_config="$(cat "$config_path")"
   fi
 
-  cleaned_config="$(printf "%s" "$existing_config" | remove_managed_config | trim_blank_edges)"
-  if [ -z "$cleaned_config" ]; then
-    printf "%s\n" "$managed_config" > "$config_path"
-  else
-    printf "%s\n\n%s\n" "$managed_config" "$cleaned_config" > "$config_path"
-  fi
+  merge_config "$existing_config" > "$config_path"
 
   if [ -f "$auth_path" ]; then
     backup_file_if_exists "$auth_path"
@@ -166,6 +262,7 @@ restore_file() {
   local path="$1"
   if [ -f "$path.bak" ]; then
     cp "$path.bak" "$path"
+    rm -f "$path.bak"
     return 0
   fi
   return 1
@@ -179,7 +276,7 @@ restore_default() {
 
   if ! restore_file "$config_path"; then
     if [ -f "$config_path" ]; then
-      cleaned_config="$(cat "$config_path" | remove_managed_config | trim_blank_edges)"
+      cleaned_config="$(remove_managed_config "$(cat "$config_path")")"
       if [ -z "$cleaned_config" ]; then
         rm -f "$config_path"
       else

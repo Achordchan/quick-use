@@ -31,25 +31,26 @@ function Escape-JsonString {
     return $Value.Replace("\", "\\").Replace('"', '\"')
 }
 
-function Get-ManagedConfig {
-    return @'
-model_provider = "OpenAI"
-model = "gpt-5.5"
-review_model = "gpt-5.5"
-model_reasoning_effort = "high"
-disable_response_storage = true
-network_access = "enabled"
-windows_wsl_setup_acknowledged = true
+function Get-ManagedRootKeys {
+    $content = @()
+    $content += 'model_provider = "OpenAI"'
+    $content += 'model = "gpt-5.5"'
+    $content += 'review_model = "gpt-5.5"'
+    $content += 'model_reasoning_effort = "high"'
+    $content += 'disable_response_storage = true'
+    $content += 'network_access = "enabled"'
+    $content += 'windows_wsl_setup_acknowledged = true'
+    return ($content -join "`n")
+}
 
-[model_providers.OpenAI]
-name = "OpenAI"
-base_url = "https://sub.achord.cn:8443"
-wire_api = "responses"
-requires_openai_auth = true
-
-[features]
-goals = true
-'@
+function Get-ManagedProviderBlock {
+    $content = @()
+    $content += '[model_providers.OpenAI]'
+    $content += 'name = "OpenAI"'
+    $content += 'base_url = "https://sub.achord.cn:8443"'
+    $content += 'wire_api = "responses"'
+    $content += 'requires_openai_auth = true'
+    return ($content -join "`n")
 }
 
 function Test-ManagedRootKey {
@@ -71,12 +72,20 @@ function Test-ManagedRootKey {
     ) -contains $key
 }
 
-function Remove-ManagedConfig {
+function Split-ConfigForMerge {
     param([string]$Content)
 
-    $lines = $Content -replace "`r`n", "`n" -split "`n"
-    $out = New-Object System.Collections.Generic.List[string]
-    $inManagedSection = $false
+    $lines = @()
+    if (-not [string]::IsNullOrEmpty($Content)) {
+        $lines = $Content -replace "`r`n", "`n" -split "`n"
+    }
+
+    $rootLines = New-Object System.Collections.Generic.List[string]
+    $sectionLines = New-Object System.Collections.Generic.List[string]
+    $preservedFeatures = New-Object System.Collections.Generic.List[string]
+    $inManagedProvider = $false
+    $inFeatures = $false
+    $inOtherSection = $false
     $inRoot = $true
 
     foreach ($line in $lines) {
@@ -84,38 +93,124 @@ function Remove-ManagedConfig {
 
         if ($trimmed.StartsWith("[") -and $trimmed.EndsWith("]")) {
             $inRoot = $false
-            $inManagedSection = $trimmed -eq "[model_providers.OpenAI]" -or $trimmed -eq "[features]"
-            if (-not $inManagedSection) {
-                $out.Add($line)
+            $inManagedProvider = $trimmed -eq "[model_providers.OpenAI]"
+            $inFeatures = $trimmed -eq "[features]"
+            $inOtherSection = -not ($inManagedProvider -or $inFeatures)
+            if ($inOtherSection) {
+                $sectionLines.Add($line)
             }
             continue
         }
 
-        if ($inManagedSection) {
+        if ($inManagedProvider) {
             if ([string]::IsNullOrWhiteSpace($trimmed) -or $trimmed.StartsWith("#") -or $trimmed.Contains("=")) {
                 continue
             }
-        }
-
-        if ($inRoot -and (Test-ManagedRootKey $trimmed)) {
+            $inManagedProvider = $false
+            $inOtherSection = $true
+            $sectionLines.Add($line)
             continue
         }
 
-        $out.Add($line)
+        if ($inFeatures) {
+            if ([string]::IsNullOrWhiteSpace($trimmed) -or $trimmed.StartsWith("#")) {
+                continue
+            }
+            if ($trimmed.Contains("=")) {
+                $key = $trimmed.Split("=", 2)[0].Trim()
+                if ($key -ne "goals") {
+                    $preservedFeatures.Add($line)
+                }
+                continue
+            }
+            $inFeatures = $false
+            $inOtherSection = $true
+            $sectionLines.Add($line)
+            continue
+        }
+
+        if ($inOtherSection) {
+            $sectionLines.Add($line)
+            continue
+        }
+
+        if ($inRoot) {
+            if (Test-ManagedRootKey $trimmed) {
+                continue
+            }
+            $rootLines.Add($line)
+            continue
+        }
+
+        $sectionLines.Add($line)
     }
 
-    return (($out -join "`n").Trim())
+    return @{
+        Root = (($rootLines -join "`n").Trim())
+        Sections = (($sectionLines -join "`n").Trim())
+        PreservedFeatures = @($preservedFeatures)
+    }
+}
+
+function Build-FeaturesBlock {
+    param(
+        [string[]]$PreservedFeatures,
+        [bool]$IncludeGoals
+    )
+
+    $featureLines = New-Object System.Collections.Generic.List[string]
+    if ($IncludeGoals) {
+        $featureLines.Add("goals = true")
+    }
+    foreach ($line in $PreservedFeatures) {
+        if (-not [string]::IsNullOrWhiteSpace($line)) {
+            $featureLines.Add($line)
+        }
+    }
+
+    if ($featureLines.Count -eq 0) {
+        return ""
+    }
+
+    return ("[features]`n" + ($featureLines -join "`n"))
+}
+
+function Join-ConfigChunks {
+    param([string[]]$Chunks)
+
+    $nonEmpty = New-Object System.Collections.Generic.List[string]
+    foreach ($chunk in $Chunks) {
+        if (-not [string]::IsNullOrWhiteSpace($chunk)) {
+            $nonEmpty.Add($chunk.Trim())
+        }
+    }
+    if ($nonEmpty.Count -eq 0) {
+        return ""
+    }
+    return (($nonEmpty -join "`n`n").Trim())
+}
+
+function Remove-ManagedConfig {
+    param([string]$Content)
+
+    $parts = Split-ConfigForMerge $Content
+    $features = Build-FeaturesBlock -PreservedFeatures $parts.PreservedFeatures -IncludeGoals:$false
+    return (Join-ConfigChunks @($parts.Root, $parts.Sections, $features))
 }
 
 function Merge-Config {
     param([string]$Existing)
 
-    $managed = Get-ManagedConfig
-    $cleaned = Remove-ManagedConfig $Existing
-    if ([string]::IsNullOrWhiteSpace($cleaned)) {
-        return "$managed`n"
-    }
-    return "$managed`n`n$cleaned`n"
+    $parts = Split-ConfigForMerge $Existing
+    $features = Build-FeaturesBlock -PreservedFeatures $parts.PreservedFeatures -IncludeGoals:$true
+    $merged = Join-ConfigChunks @(
+        (Get-ManagedRootKeys),
+        $parts.Root,
+        (Get-ManagedProviderBlock),
+        $parts.Sections,
+        $features
+    )
+    return ($merged + "`n")
 }
 
 function Get-TargetPaths {
@@ -134,6 +229,10 @@ function Get-TargetPaths {
 function Read-ApiKey {
     if (-not [string]::IsNullOrWhiteSpace($script:ApiKey)) {
         return $script:ApiKey
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_API_KEY)) {
+        return $env:CODEX_API_KEY
     }
 
     $secureKey = Read-Host "Enter API key" -AsSecureString
@@ -168,11 +267,7 @@ function Invoke-Deploy {
     }
 
     $escapedApiKey = Escape-JsonString $key
-    $authContent = @"
-{
-  "OPENAI_API_KEY": "$escapedApiKey"
-}
-"@
+    $authContent = "{`n  `"OPENAI_API_KEY`": `"$escapedApiKey`"`n}"
     Write-Utf8NoBom -Path $paths.AuthPath -Content ($authContent + "`n")
 
     Write-Host "Deploy done: $($paths.TargetDir)"
@@ -184,6 +279,7 @@ function Restore-File {
     $backupPath = "$Path.bak"
     if (Test-Path -LiteralPath $backupPath -PathType Leaf) {
         Copy-Item -LiteralPath $backupPath -Destination $Path -Force
+        Remove-Item -LiteralPath $backupPath -Force
         return $true
     }
     return $false

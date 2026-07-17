@@ -11,9 +11,6 @@ $argsList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $scriptPath)
 if (-not [string]::IsNullOrWhiteSpace($env:CODEX_ACTION)) {
     $argsList += @("-Action", $env:CODEX_ACTION)
 }
-if (-not [string]::IsNullOrWhiteSpace($env:CODEX_API_KEY)) {
-    $argsList += @("-ApiKey", $env:CODEX_API_KEY)
-}
 if (-not [string]::IsNullOrWhiteSpace($env:CODEX_DIR_NAME)) {
     $argsList += @("-DirName", $env:CODEX_DIR_NAME)
 }
