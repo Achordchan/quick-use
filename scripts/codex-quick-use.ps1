@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$ApiKey = "",
     [string]$DirName = ".codex",
     [string]$Action = ""
@@ -235,7 +235,7 @@ function Read-ApiKey {
         return $env:CODEX_API_KEY
     }
 
-    $secureKey = Read-Host "Enter API key" -AsSecureString
+    $secureKey = Read-Host "请输入 API key" -AsSecureString
     $plainPtr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
     try {
         return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($plainPtr)
@@ -248,7 +248,7 @@ function Read-ApiKey {
 function Invoke-Deploy {
     $key = Read-ApiKey
     if ([string]::IsNullOrWhiteSpace($key)) {
-        throw "API key cannot be empty"
+        throw "API key 不能为空"
     }
 
     $paths = Get-TargetPaths
@@ -270,7 +270,7 @@ function Invoke-Deploy {
     $authContent = "{`n  `"OPENAI_API_KEY`": `"$escapedApiKey`"`n}"
     Write-Utf8NoBom -Path $paths.AuthPath -Content ($authContent + "`n")
 
-    Write-Host "Deploy done: $($paths.TargetDir)"
+    Write-Host "部署完成：$($paths.TargetDir)"
 }
 
 function Restore-File {
@@ -288,7 +288,7 @@ function Restore-File {
 function Invoke-RestoreDefault {
     $paths = Get-TargetPaths
     if (-not (Test-Path -LiteralPath $paths.TargetDir -PathType Container)) {
-        Write-Host "Nothing to restore: $($paths.TargetDir)"
+        Write-Host "没有可恢复的配置：$($paths.TargetDir)"
         return
     }
 
@@ -311,20 +311,20 @@ function Invoke-RestoreDefault {
         }
     }
 
-    Write-Host "Restore done: $($paths.TargetDir)"
+    Write-Host "恢复完成：$($paths.TargetDir)"
 }
 
 function Show-Menu {
     Write-Host ""
-    Write-Host "1) Deploy"
-    Write-Host "2) Restore default"
-    Write-Host "3) Exit"
-    $choice = Read-Host "Select 1-3"
+    Write-Host "1) 部署配置"
+    Write-Host "2) 恢复默认配置"
+    Write-Host "3) 退出"
+    $choice = Read-Host "请选择 1-3"
     switch ($choice) {
         "1" { $script:Action = "deploy" }
         "2" { $script:Action = "restore" }
         "3" { $script:Action = "exit" }
-        default { throw "Invalid selection: $choice" }
+        default { throw "无效选项：$choice" }
     }
 }
 
@@ -335,6 +335,6 @@ if ([string]::IsNullOrWhiteSpace($Action)) {
 switch ($Action.Trim().ToLowerInvariant()) {
     "deploy" { Invoke-Deploy }
     "restore" { Invoke-RestoreDefault }
-    "exit" { Write-Host "Exit" }
-    default { throw "Unknown action: $Action" }
+    "exit" { Write-Host "已退出" }
+    default { throw "未知操作：$Action" }
 }

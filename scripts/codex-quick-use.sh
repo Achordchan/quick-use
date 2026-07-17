@@ -20,7 +20,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     *)
-      echo "Unknown argument: $1" >&2
+      echo "未知参数：$1" >&2
       exit 1
       ;;
   esac
@@ -208,13 +208,13 @@ read_api_key() {
   fi
 
   if [ -r /dev/tty ] && [ -t 1 ]; then
-    printf "Enter API key: " > /dev/tty
+    printf "请输入 API key：" > /dev/tty
     stty -echo < /dev/tty
     IFS= read -r api_key < /dev/tty
     stty echo < /dev/tty
     printf "\n" > /dev/tty
   else
-    printf "Enter API key: "
+    printf "请输入 API key："
     if [ -t 0 ]; then
       stty -echo
     fi
@@ -226,7 +226,7 @@ read_api_key() {
   fi
 
   if [ -z "${api_key// }" ]; then
-    echo "API key cannot be empty" >&2
+    echo "API key 不能为空" >&2
     exit 1
   fi
 }
@@ -255,7 +255,7 @@ deploy() {
 EOF
 
   chmod 600 "$config_path" "$auth_path" 2>/dev/null || true
-  echo "Deploy done: $target_dir"
+  echo "部署完成：$target_dir"
 }
 
 restore_file() {
@@ -270,7 +270,7 @@ restore_file() {
 
 restore_default() {
   if [ ! -d "$target_dir" ]; then
-    echo "Nothing to restore: $target_dir"
+    echo "没有可恢复的配置：$target_dir"
     return
   fi
 
@@ -289,23 +289,23 @@ restore_default() {
     rm -f "$auth_path"
   fi
 
-  echo "Restore done: $target_dir"
+  echo "恢复完成：$target_dir"
 }
 
 show_menu() {
   if [ -r /dev/tty ] && [ -t 1 ]; then
     printf "\n" > /dev/tty
-    printf "1) Deploy\n" > /dev/tty
-    printf "2) Restore default\n" > /dev/tty
-    printf "3) Exit\n" > /dev/tty
-    printf "Select 1-3: " > /dev/tty
+    printf "1) 部署配置\n" > /dev/tty
+    printf "2) 恢复默认配置\n" > /dev/tty
+    printf "3) 退出\n" > /dev/tty
+    printf "请选择 1-3：" > /dev/tty
     IFS= read -r choice < /dev/tty
   else
     printf "\n"
-    printf "1) Deploy\n"
-    printf "2) Restore default\n"
-    printf "3) Exit\n"
-    printf "Select 1-3: "
+    printf "1) 部署配置\n"
+    printf "2) 恢复默认配置\n"
+    printf "3) 退出\n"
+    printf "请选择 1-3："
     IFS= read -r choice
   fi
 
@@ -313,7 +313,7 @@ show_menu() {
     1) action="deploy" ;;
     2) action="restore" ;;
     3) action="exit" ;;
-    *) echo "Invalid selection" >&2; exit 1 ;;
+    *) echo "无效选项" >&2; exit 1 ;;
   esac
 }
 
@@ -324,6 +324,6 @@ fi
 case "$(printf "%s" "$action" | tr '[:upper:]' '[:lower:]')" in
   deploy) deploy ;;
   restore) restore_default ;;
-  exit) echo "Exit" ;;
-  *) echo "Unknown action: $action" >&2; exit 1 ;;
+  exit) echo "已退出" ;;
+  *) echo "未知操作：$action" >&2; exit 1 ;;
 esac

@@ -14,7 +14,7 @@ if command -v curl >/dev/null 2>&1; then
 elif command -v wget >/dev/null 2>&1; then
   wget -qO "$script_path" "$script_url"
 else
-  echo "curl or wget is required" >&2
+  echo "需要安装 curl 或 wget" >&2
   exit 1
 fi
 

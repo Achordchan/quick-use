@@ -21,16 +21,16 @@ curl -fsSL https://raw.githubusercontent.com/Achordchan/quick-use/main/install.s
 运行后会先显示菜单：
 
 ```text
-1) Deploy
-2) Restore default
-3) Exit
+1) 部署配置
+2) 恢复默认配置
+3) 退出
 ```
 
 对应含义：
 
-- `Deploy`：一键部署，输入 API key 后写入配置。
-- `Restore default`：恢复默认，优先从 `.bak` 还原；没有备份时移除本工具写入的配置。
-- `Exit`：退出，不修改文件。
+- `部署配置`：输入 API key 后写入配置。
+- `恢复默认配置`：优先从 `.bak` 还原；没有备份时移除本工具写入的配置。
+- `退出`：不修改文件，直接退出。
 
 本机测试不要写真实 `.codex`，可以这样写到 `.codex1`：
 
