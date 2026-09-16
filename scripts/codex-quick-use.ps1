@@ -6,12 +6,19 @@
 
 $ErrorActionPreference = "Stop"
 
-function Backup-FileIfExists {
+function Save-OriginalFileState {
     param([string]$Path)
 
     $backupPath = "$Path.bak"
-    if ((Test-Path -LiteralPath $Path -PathType Leaf) -and -not (Test-Path -LiteralPath $backupPath -PathType Leaf)) {
+    $absentPath = "$Path.quick-use-absent"
+    if ((Test-Path -LiteralPath $backupPath) -or (Test-Path -LiteralPath $absentPath)) {
+        return
+    }
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
         Copy-Item -LiteralPath $Path -Destination $backupPath
+    }
+    else {
+        Write-Utf8NoBom -Path $absentPath -Content "absent-v1`n"
     }
 }
 
@@ -53,6 +60,16 @@ function Get-ManagedProviderBlock {
     return ($content -join "`n")
 }
 
+function Get-ConfigKey {
+    param([string]$Line)
+
+    $key = $Line.Split("=", 2)[0].Trim()
+    if ($key -match '^"([A-Za-z0-9_-]+)"$' -or $key -match "^'([A-Za-z0-9_-]+)'$") {
+        return $Matches[1]
+    }
+    return $key
+}
+
 function Test-ManagedRootKey {
     param([string]$Line)
 
@@ -60,7 +77,7 @@ function Test-ManagedRootKey {
         return $false
     }
 
-    $key = $Line.Split("=", 2)[0].Trim()
+    $key = Get-ConfigKey $Line
     return @(
         "model_provider",
         "model",
@@ -69,7 +86,7 @@ function Test-ManagedRootKey {
         "disable_response_storage",
         "network_access",
         "windows_wsl_setup_acknowledged"
-    ) -contains $key
+    ) -ccontains $key
 }
 
 function Split-ConfigForMerge {
@@ -91,10 +108,11 @@ function Split-ConfigForMerge {
     foreach ($line in $lines) {
         $trimmed = $line.Trim()
 
-        if ($trimmed.StartsWith("[") -and $trimmed.EndsWith("]")) {
+        if ($trimmed -match '^(\[.*?\])\s*(?:#.*)?$') {
+            $header = $Matches[1]
             $inRoot = $false
-            $inManagedProvider = $trimmed -eq "[model_providers.OpenAI]"
-            $inFeatures = $trimmed -eq "[features]"
+            $inManagedProvider = $header -cmatch '^\[\s*(?:model_providers|"model_providers"|''model_providers'')\s*\.\s*(?:OpenAI|"OpenAI"|''OpenAI'')\s*\]$'
+            $inFeatures = $header -cmatch '^\[\s*(?:features|"features"|''features'')\s*\]$'
             $inOtherSection = -not ($inManagedProvider -or $inFeatures)
             if ($inOtherSection) {
                 $sectionLines.Add($line)
@@ -117,8 +135,8 @@ function Split-ConfigForMerge {
                 continue
             }
             if ($trimmed.Contains("=")) {
-                $key = $trimmed.Split("=", 2)[0].Trim()
-                if ($key -ne "goals") {
+                $key = Get-ConfigKey $trimmed
+                if ($key -cne "goals") {
                     $preservedFeatures.Add($line)
                 }
                 continue
@@ -256,15 +274,13 @@ function Invoke-Deploy {
 
     $existingConfig = ""
     if (Test-Path -LiteralPath $paths.ConfigPath -PathType Leaf) {
-        Backup-FileIfExists $paths.ConfigPath
         $existingConfig = Get-Content -LiteralPath $paths.ConfigPath -Raw -Encoding UTF8
     }
 
-    Write-Utf8NoBom -Path $paths.ConfigPath -Content (Merge-Config $existingConfig)
-
-    if (Test-Path -LiteralPath $paths.AuthPath -PathType Leaf) {
-        Backup-FileIfExists $paths.AuthPath
-    }
+    $mergedConfig = Merge-Config $existingConfig
+    Save-OriginalFileState $paths.ConfigPath
+    Save-OriginalFileState $paths.AuthPath
+    Write-Utf8NoBom -Path $paths.ConfigPath -Content $mergedConfig
 
     $escapedApiKey = Escape-JsonString $key
     $authContent = "{`n  `"OPENAI_API_KEY`": `"$escapedApiKey`"`n}"
@@ -292,7 +308,9 @@ function Invoke-RestoreDefault {
         return
     }
 
-    if (-not (Restore-File $paths.ConfigPath)) {
+    $configWasAbsent = "$($paths.ConfigPath).quick-use-absent"
+    $authWasAbsent = "$($paths.AuthPath).quick-use-absent"
+    if (-not (Restore-File $paths.ConfigPath) -and (Test-Path -LiteralPath $configWasAbsent -PathType Leaf)) {
         if (Test-Path -LiteralPath $paths.ConfigPath -PathType Leaf) {
             $existingConfig = Get-Content -LiteralPath $paths.ConfigPath -Raw -Encoding UTF8
             $cleanedConfig = Remove-ManagedConfig $existingConfig
@@ -305,12 +323,17 @@ function Invoke-RestoreDefault {
         }
     }
 
-    if (-not (Restore-File $paths.AuthPath)) {
+    if (-not (Restore-File $paths.AuthPath) -and (Test-Path -LiteralPath $authWasAbsent -PathType Leaf)) {
         if (Test-Path -LiteralPath $paths.AuthPath -PathType Leaf) {
             Remove-Item -LiteralPath $paths.AuthPath -Force
         }
     }
 
+    foreach ($marker in @($configWasAbsent, $authWasAbsent)) {
+        if (Test-Path -LiteralPath $marker -PathType Leaf) {
+            Remove-Item -LiteralPath $marker -Force
+        }
+    }
     Write-Host "恢复完成：$($paths.TargetDir)"
 }
 
