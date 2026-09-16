@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/Achordchan/quick-use/main/install.s
 对应含义：
 
 - `部署配置`：输入 API key 后写入配置。
-- `恢复默认配置`：优先从 `.bak` 还原；没有备份时移除本工具写入的配置。
+- `恢复默认配置`：优先从 `.bak` 还原；有“部署前不存在”的记录时清理本工具写入的内容；两者都没有时保留现有文件。重复恢复不会删除已还原的配置或登录信息。
 - `退出`：不修改文件，直接退出。
 
 本机测试不要写真实 `.codex`，可以这样写到 `.codex1`：
@@ -90,4 +90,16 @@ goals = true
 - 正式使用默认写入用户目录下的 `.codex`。
 - 本机测试可以写入 `.codex1`，不会影响真实 Codex 配置。
 - 写入前会备份已有文件：`config.toml.bak`、`auth.json.bak`。
+- 部署前不存在的文件会生成对应的 `.quick-use-absent` 状态文件；重复部署保留首次备份或状态记录，恢复完成后清理记录。
+- 旧版 `.bak` 备份仍可恢复。旧版部署若没有备份，也没有状态记录，将保留现有文件，避免误删用户配置。
 - API key 只保存到 `auth.json`，不会写入 `config.toml`。
+
+## 回归测试
+
+安装 Python 3.11 或更高版本后运行：
+
+```text
+python -m unittest discover -s tests -v
+```
+
+测试自动选择可用的 PowerShell 和 Bash，并使用临时目录，不修改用户的真实 Codex 配置。GitHub Actions 分别验证 Windows、macOS 和 Linux。

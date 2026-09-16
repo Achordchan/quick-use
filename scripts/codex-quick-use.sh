@@ -48,24 +48,38 @@ base_url = "https://sub.achord.cn:8443"
 wire_api = "responses"
 requires_openai_auth = true'
 
-backup_file_if_exists() {
+save_original_file_state() {
   local path="$1"
-  if [ -f "$path" ] && [ ! -f "$path.bak" ]; then
+  if [ -e "$path.bak" ] || [ -e "$path.quick-use-absent" ]; then
+    return
+  fi
+  if [ -f "$path" ]; then
     cp "$path" "$path.bak"
+  else
+    printf 'absent-v1\n' > "$path.quick-use-absent"
   fi
 }
 
 split_config_for_merge() {
-  awk '
+  awk -v apostrophe="'" '
     function trim(s) {
       gsub(/^[ \t]+|[ \t]+$/, "", s)
       return s
     }
-    function managed_root_key(line, key) {
-      if (line !~ /=/) return 0
+    function config_key(line, key, quote) {
       key = line
       sub(/=.*/, "", key)
       key = trim(key)
+      quote = substr(key, 1, 1)
+      if ((quote == "\"" || quote == apostrophe) && substr(key, length(key), 1) == quote &&
+          substr(key, 2, length(key)-2) ~ /^[A-Za-z0-9_-]+$/) {
+        key = substr(key, 2, length(key)-2)
+      }
+      return key
+    }
+    function managed_root_key(line, key) {
+      if (line !~ /=/) return 0
+      key = config_key(line)
       return key == "model_provider" ||
         key == "model" ||
         key == "review_model" ||
@@ -76,11 +90,16 @@ split_config_for_merge() {
     }
     {
       line = $0
+      sub(/\r$/, "", line)
       trimmed = trim(line)
-      if (trimmed ~ /^\[.*\]$/) {
+      if (trimmed ~ /^\[.*\][ \t]*(#.*)?$/) {
+        header = trimmed
+        sub(/\][ \t]*(#.*)?$/, "]", header)
+        provider_pattern = "^\\[[ \t]*(model_providers|\"model_providers\"|" apostrophe "model_providers" apostrophe ")[ \t]*\\.[ \t]*(OpenAI|\"OpenAI\"|" apostrophe "OpenAI" apostrophe ")[ \t]*\\]$"
+        features_pattern = "^\\[[ \t]*(features|\"features\"|" apostrophe "features" apostrophe ")[ \t]*\\]$"
         in_root = 0
-        in_managed_provider = trimmed == "[model_providers.OpenAI]"
-        in_features = trimmed == "[features]"
+        in_managed_provider = header ~ provider_pattern
+        in_features = header ~ features_pattern
         in_other_section = !(in_managed_provider || in_features)
         if (in_other_section) print "SECTION\t" line
         next
@@ -95,9 +114,7 @@ split_config_for_merge() {
       if (in_features) {
         if (trimmed == "" || trimmed ~ /^#/) next
         if (trimmed ~ /=/) {
-          key = trimmed
-          sub(/=.*/, "", key)
-          key = trim(key)
+          key = config_key(trimmed)
           if (key != "goals") print "FEATURE\t" line
           next
         }
@@ -127,7 +144,8 @@ split_config_for_merge() {
 }
 
 trim_blank_edges() {
-  sed '/./,$!d' | sed ':a;/^\n*$/{$d;N;ba;}'
+  awk 'NF { for (i = 0; i < blanks; i++) print ""; blanks = 0; print; started = 1; next }
+       started { blanks++ }'
 }
 
 extract_part() {
@@ -237,15 +255,14 @@ deploy() {
 
   existing_config=""
   if [ -f "$config_path" ]; then
-    backup_file_if_exists "$config_path"
     existing_config="$(cat "$config_path")"
   fi
 
-  merge_config "$existing_config" > "$config_path"
-
-  if [ -f "$auth_path" ]; then
-    backup_file_if_exists "$auth_path"
-  fi
+  local merged_config
+  merged_config="$(merge_config "$existing_config")"
+  save_original_file_state "$config_path"
+  save_original_file_state "$auth_path"
+  printf '%s\n' "$merged_config" > "$config_path"
 
   escaped_key="$(printf "%s" "$api_key" | sed 's/\\/\\\\/g; s/"/\\"/g')"
   cat > "$auth_path" <<EOF
@@ -274,7 +291,9 @@ restore_default() {
     return
   fi
 
-  if ! restore_file "$config_path"; then
+  if [ -f "$config_path.bak" ]; then
+    restore_file "$config_path"
+  elif [ -f "$config_path.quick-use-absent" ]; then
     if [ -f "$config_path" ]; then
       cleaned_config="$(remove_managed_config "$(cat "$config_path")")"
       if [ -z "$cleaned_config" ]; then
@@ -285,10 +304,13 @@ restore_default() {
     fi
   fi
 
-  if ! restore_file "$auth_path"; then
+  if [ -f "$auth_path.bak" ]; then
+    restore_file "$auth_path"
+  elif [ -f "$auth_path.quick-use-absent" ]; then
     rm -f "$auth_path"
   fi
 
+  rm -f "$config_path.quick-use-absent" "$auth_path.quick-use-absent"
   echo "恢复完成：$target_dir"
 }
 
